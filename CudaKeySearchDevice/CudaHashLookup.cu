@@ -239,47 +239,44 @@ void CudaHashLookup::cleanup()
 
 __device__ bool checkBloomFilter(const unsigned int hash[5])
 {
-	bool foundMatch = true;
+	const unsigned int mask = _BLOOM_FILTER_MASK[0];
+	const unsigned int *bloomFilter = _BLOOM_FILTER[0];
 
-	unsigned int mask = _BLOOM_FILTER_MASK[0];
-	unsigned int *bloomFilter = _BLOOM_FILTER[0];
-
+	// Short-circuit: 99.99%+ of candidates miss on the very first probe, so
+	// bailing out early avoids 4 unnecessary global loads per thread.
+	#pragma unroll
 	for(int i = 0; i < 5; i++) {
         unsigned int idx = hash[i] & mask;
-
-        unsigned int f = bloomFilter[idx / 32];
-
-		if((f & (0x01 << (idx % 32))) == 0) {
-			foundMatch = false;
+        unsigned int f = __ldg(&bloomFilter[idx / 32]);
+		if((f & (1u << (idx % 32))) == 0) {
+			return false;
 		}
 	}
 
-	return foundMatch;
+	return true;
 }
 
 __device__ bool checkBloomFilter64(const unsigned int hash[5])
 {
-	bool foundMatch = true;
+	const unsigned long long mask = _BLOOM_FILTER_MASK64[0];
+	const unsigned int *bloomFilter = _BLOOM_FILTER[0];
 
-	unsigned long long mask = _BLOOM_FILTER_MASK64[0];
-	unsigned int *bloomFilter = _BLOOM_FILTER[0];
 	unsigned long long idx[5];
-
 	idx[0] = ((unsigned long long)hash[0] << 32 | hash[1]) & mask;
 	idx[1] = ((unsigned long long)hash[2] << 32 | hash[3]) & mask;
 	idx[2] = ((unsigned long long)(hash[0] ^ hash[1]) << 32 | (hash[1] ^ hash[2])) & mask;
 	idx[3] = ((unsigned long long)(hash[2] ^ hash[3]) << 32 | (hash[3] ^ hash[4])) & mask;
 	idx[4] = ((unsigned long long)(hash[0] ^ hash[3]) << 32 | (hash[1] ^ hash[3])) & mask;
 
+	#pragma unroll
 	for(int i = 0; i < 5; i++) {
-		unsigned int f = bloomFilter[idx[i] / 32];
-
-		if((f & (0x01 << (idx[i] % 32))) == 0) {
-			foundMatch = false;
+		unsigned int f = __ldg(&bloomFilter[idx[i] / 32]);
+		if((f & (1u << (idx[i] % 32))) == 0) {
+			return false;
 		}
 	}
 
-	return foundMatch;
+	return true;
 }
 
 

@@ -9,14 +9,17 @@ static unsigned int endian(unsigned int x)
 	return (x << 24) | ((x << 8) & 0x00ff0000) | ((x >> 8) & 0x0000ff00) | (x >> 24);
 }
 
-bool Address::verifyAddress(std::string address)
+static bool verifyP2PKH(const std::string &address)
 {
-	// Check length
-	if(address.length() > 34) {
-		false;
+	// Mainnet P2PKH addresses are between 26 and 34 base58 characters and
+	// always start with '1'.
+	if(address.empty() || address[0] != '1') {
+		return false;
+	}
+	if(address.length() < 26 || address.length() > 35) {
+		return false;
 	}
 
-	// Check encoding
 	if(!Base58::isBase58(address)) {
 		return false;
 	}
@@ -33,6 +36,30 @@ bool Address::verifyAddress(std::string address)
 	checksum = words[5];
 
 	return crypto::checksum(hash) == checksum;
+}
+
+bool Address::verifyAddress(std::string address)
+{
+	if(Bech32::isBech32Address(address)) {
+		unsigned int dummy[5];
+		return Bech32::decodeP2WPKH(address, dummy);
+	}
+	return verifyP2PKH(address);
+}
+
+Address::Kind Address::toHash160(const std::string &address, unsigned int hash[5])
+{
+	if(Bech32::isBech32Address(address)) {
+		if(Bech32::decodeP2WPKH(address, hash)) {
+			return Kind::P2WPKH;
+		}
+		return Kind::Unsupported;
+	}
+	if(verifyP2PKH(address)) {
+		Base58::toHash160(address, hash);
+		return Kind::P2PKH;
+	}
+	return Kind::Unsupported;
 }
 
 std::string Address::fromPublicKey(const secp256k1::ecpoint &p, bool compressed)

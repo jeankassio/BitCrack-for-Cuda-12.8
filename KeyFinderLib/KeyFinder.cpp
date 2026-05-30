@@ -51,16 +51,18 @@ void KeyFinder::setTargets(std::vector<std::string> &targets)
 
 	_targets.clear();
 
-	// Convert each address from base58 encoded form to a 160-bit integer
+	// Convert each address from base58 (P2PKH) or bech32 (P2WPKH) to a 160-bit
+	// integer. Both encodings commit to RIPEMD160(SHA256(pubkey)), which is
+	// exactly what the GPU pipeline produces, so they can be matched against
+	// the same target set.
 	for(unsigned int i = 0; i < targets.size(); i++) {
-
-		if(!Address::verifyAddress(targets[i])) {
-			throw KeySearchException("Invalid address '" + targets[i] + "'");
-		}
 
 		KeySearchTarget t;
 
-		Base58::toHash160(targets[i], t.value);
+		Address::Kind kind = Address::toHash160(targets[i], t.value);
+		if(kind == Address::Kind::Unsupported) {
+			throw KeySearchException("Invalid or unsupported address '" + targets[i] + "'");
+		}
 
 		_targets.insert(t);
 	}
@@ -81,25 +83,70 @@ void KeyFinder::setTargets(std::string targetsFile)
 
 	std::string line;
 	Logger::log(LogLevel::Info, "Loading addresses from '" + targetsFile + "'");
+
+	uint64_t loadedP2PKH = 0;
+	uint64_t loadedP2WPKH = 0;
+	uint64_t skipped = 0;
+	uint64_t lineNo = 0;
+
 	while(std::getline(inFile, line)) {
+		lineNo++;
 		util::removeNewline(line);
+
+		// The blockchair address dump is TSV ("address\tbalance"). Keep only
+		// the first column so the same loader works for plain address lists
+		// and for TSV files.
+		size_t tab = line.find('\t');
+		if(tab != std::string::npos) {
+			line = line.substr(0, tab);
+		}
+
         line = util::trim(line);
 
-		if(line.length() > 0) {
-			if(!Address::verifyAddress(line)) {
-				Logger::log(LogLevel::Error, "Invalid address '" + line + "'");
-				throw KeySearchException();
-			}
+		// Allow blank lines and '#' comments.
+		if(line.empty() || line[0] == '#') {
+			continue;
+		}
 
-			KeySearchTarget t;
+		KeySearchTarget t;
+		Address::Kind kind = Address::toHash160(line, t.value);
+		if(kind == Address::Kind::Unsupported) {
+			skipped++;
+			continue;
+		}
 
-			Base58::toHash160(line, t.value);
+		if(kind == Address::Kind::P2PKH) {
+			loadedP2PKH++;
+		} else if(kind == Address::Kind::P2WPKH) {
+			loadedP2WPKH++;
+		}
 
-			_targets.insert(t);
+		_targets.insert(t);
+
+		// Periodic progress log so loading a 58M-row TSV doesn't look frozen.
+		if(((loadedP2PKH + loadedP2WPKH) & 0xFFFFF) == 0) {
+			Logger::log(LogLevel::Info,
+				"  ... " + util::formatThousands(loadedP2PKH + loadedP2WPKH)
+				+ " addresses parsed");
 		}
 	}
-	Logger::log(LogLevel::Info, util::formatThousands(_targets.size()) + " addresses loaded ("
-		+ util::format("%.1f", (double)(sizeof(KeySearchTarget) * _targets.size()) / (double)(1024 * 1024)) + "MB)");
+
+	uint64_t loaded = _targets.size();
+	Logger::log(LogLevel::Info,
+		util::formatThousands(loaded) + " unique addresses loaded ("
+		+ util::formatThousands(loadedP2PKH) + " P2PKH + "
+		+ util::formatThousands(loadedP2WPKH) + " P2WPKH; "
+		+ util::formatThousands(skipped) + " skipped/unsupported)");
+	Logger::log(LogLevel::Info,
+		"Target table size: "
+		+ util::format("%.1f", (double)(sizeof(KeySearchTarget) * loaded) / (double)(1024 * 1024))
+		+ " MB host-side");
+
+	if(loaded == 0) {
+		throw KeySearchException(
+			"No supported addresses found in '" + targetsFile
+			+ "'. BitCrack matches P2PKH ('1...') and native P2WPKH ('bc1q...') only.");
+	}
 
     _device->setTargets(_targets);
 }

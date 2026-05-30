@@ -10,12 +10,16 @@ LIBS+=-L$(LIBDIR)
 
 # C++ options
 CXX=g++
-CXXFLAGS=-O2 -std=c++11
+CXXFLAGS=-O3 -std=c++17
 
 # CUDA variables
-COMPUTE_CAP=30
+# Default to RTX 3090 (Ampere, sm_86). Override on the command line if needed,
+# e.g.  make BUILD_CUDA=1 COMPUTE_CAP=89  for an RTX 4090.
+COMPUTE_CAP=86
 NVCC=nvcc
-NVCCFLAGS=-std=c++11 -gencode=arch=compute_${COMPUTE_CAP},code=\"sm_${COMPUTE_CAP}\" -Xptxas="-v" -Xcompiler "${CXXFLAGS}"
+NVCCFLAGS=-std=c++17 -O3 --use_fast_math \
+          -gencode=arch=compute_${COMPUTE_CAP},code=\"sm_${COMPUTE_CAP}\" \
+          -Xptxas="-v,-O3" -Xcompiler "${CXXFLAGS}"
 CUDA_HOME=/usr/local/cuda
 CUDA_LIB=${CUDA_HOME}/lib64
 CUDA_INCLUDE=${CUDA_HOME}/include
